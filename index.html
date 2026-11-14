@@ -90,7 +90,7 @@ table{border-collapse:collapse;width:100%}
     <div class="hint">
       · 拖动人物、家具、机位改位置<br>
       · 拖人物身上的小圆点改朝向，拖机位前面的小圆点改它看向哪里<br>
-      · 下方表格每一行是一个镜头：选机位、填台词<br>
+      · 下方表格每一行是一个镜头：选机位、选运动方式（推/拉/摇/升降/横移/手持）、填台词<br>
       · 打开“只改这一镜的站位”后，拖人物只影响当前镜头和后面的镜头，用来做走位<br>
       · 右边是这个镜头拍到的白膜画面，和可以直接抄进提示词的站位文字
     </div>
@@ -102,7 +102,7 @@ table{border-collapse:collapse;width:100%}
   </section>
   <section id="shots">
     <table>
-      <thead><tr><th>镜号</th><th style="width:130px">机位</th><th style="width:70px">时长(秒)</th><th style="width:110px">谁说</th><th>台词</th><th style="width:150px">检查</th><th style="width:40px"></th></tr></thead>
+      <thead><tr><th>镜号</th><th style="width:130px">机位</th><th style="width:70px">时长(秒)</th><th style="width:170px">运动</th><th style="width:110px">谁说</th><th>台词</th><th style="width:150px">检查</th><th style="width:40px"></th></tr></thead>
       <tbody id="tShots"></tbody>
     </table>
   </section>
@@ -150,16 +150,17 @@ const SAMPLE = () => ({
 function sampleShots(s) {
   const [c0, c1, c2] = s.cameras, [p0, p1, p2] = s.people;
   s.shots = [
-    { id: uid('s'), cam: c0.id, dur: 3, speaker: '', line: '', moves: {} },
-    { id: uid('s'), cam: c1.id, dur: 3, speaker: p2.id, line: '你今天怎么来这么早？', moves: {} },
-    { id: uid('s'), cam: c2.id, dur: 2, speaker: p1.id, line: '因为我想先帮你点好那杯不加糖的美式。', moves: {} },
-    { id: uid('s'), cam: c0.id, dur: 3, speaker: p0.id, line: '两位，咖啡好了。', moves: { [p0.id]: { x: -0.2, z: -2.95, face: 180 } } },
+    { id: uid('s'), cam: c0.id, dur: 3, speaker: '', line: '', moves: {}, motion: { t: 'push', a: 0.8 } },
+    { id: uid('s'), cam: c1.id, dur: 3, speaker: p2.id, line: '你今天怎么来这么早？', moves: {}, motion: { t: 'none', a: 1 } },
+    { id: uid('s'), cam: c2.id, dur: 2, speaker: p1.id, line: '因为我想先帮你点好那杯不加糖的美式。', moves: {}, motion: { t: 'none', a: 1 } },
+    { id: uid('s'), cam: c0.id, dur: 3, speaker: p0.id, line: '两位，咖啡好了。', moves: { [p0.id]: { x: -0.2, z: -2.95, face: 180 } }, motion: { t: 'panL', a: 12 } },
   ];
   return s;
 }
 let S;
 try { S = JSON.parse(localStorage.getItem('nana-whitebox')) } catch (e) { S = null }
 if (!S || !S.room) S = sampleShots(SAMPLE());
+S.shots.forEach(s => { s.moves ||= {}; s.motion ||= { t: 'none', a: 1 } });
 let sel = null;          // {kind, id}
 let curShot = S.shots[0]?.id || null;
 let perShot = false;     // 只改这一镜的站位
@@ -340,9 +341,41 @@ function nameSprite(name, color) {
   }
   const sp = new THREE.Sprite(spriteCache[key]); sp.scale.set(0.3, 0.084, 1); sp.renderOrder = 10; return sp;
 }
-function setCam(c) {
-  cam3.position.set(c.x, c.h, c.z); cam3.fov = 2 * Math.atan(10.125 / c.lens) * 180 / Math.PI;
-  cam3.aspect = 16 / 9; cam3.updateProjectionMatrix(); cam3.lookAt(c.tx, c.th, c.tz); cam3.updateMatrixWorld();
+/* ---------------- 镜头运动 ---------------- */
+const MOTIONS = [['none','固定'],['push','推'],['pull','拉'],['panL','左摇'],['panR','右摇'],['up','升'],['down','降'],['left','左移'],['right','右移'],['hand','手持']];
+const MOTION_UNITS = { push: 'm', pull: 'm', panL: '°', panR: '°', up: 'm', down: 'm', left: 'm', right: 'm', hand: '级' };
+function camPose(c, mo, k, tSec) {
+  let { x, h, z, tx, tz } = c; const th = c.th;
+  const ty = mo?.t || 'none', a = Math.max(0, mo?.a ?? 1);
+  k = Math.max(0, Math.min(1, k));
+  if (ty === 'push' || ty === 'pull') {
+    const dx = tx - x, dz = tz - z, L = Math.hypot(dx, dz) || 1, d = (ty === 'push' ? a : -a) * k;
+    x += dx / L * d; z += dz / L * d;
+  } else if (ty === 'up') { h += a * k }
+  else if (ty === 'down') { h -= a * k }
+  else if (ty === 'left' || ty === 'right') {
+    const dx = tx - x, dz = tz - z, L = Math.hypot(dx, dz) || 1, nx = -dz / L, nz = dx / L, s = (ty === 'left' ? -1 : 1) * a * k;
+    x += nx * s; z += nz * s; tx += nx * s; tz += nz * s;
+  } else if (ty === 'panL' || ty === 'panR') {
+    const deg = (ty === 'panL' ? -1 : 1) * a * k * Math.PI / 180, dx = tx - x, dz = tz - z;
+    tx = x + dx * Math.cos(deg) - dz * Math.sin(deg); tz = z + dx * Math.sin(deg) + dz * Math.cos(deg);
+  } else if (ty === 'hand') {
+    const s = a * 0.02 * Math.min(1, k * 4);
+    x += s * Math.sin(tSec * 6.7); h += s * 0.6 * Math.sin(tSec * 5.3 + 1); z += s * 0.7 * Math.sin(tSec * 4.1 + 2);
+    tx += s * 1.4 * Math.sin(tSec * 3.7 + .5); tz += s * 1.4 * Math.sin(tSec * 4.9 + 1.5);
+  }
+  return { x, h, z, tx, th, tz };
+}
+const ease = t => t < 0 ? 0 : t > 1 ? 1 : t * t * (3 - 2 * t);
+function moLabel(mo) {
+  if (!mo || mo.t === 'none') return '';
+  const names = Object.fromEntries(MOTIONS), u = MOTION_UNITS[mo.t] || '';
+  return `${names[mo.t]} ${mo.a}${u}` + (mo.t === 'hand' ? '' : '，缓入缓出');
+}
+function setCam(c, mo, k = 0, tSec = 0) {
+  const p = camPose(c, mo, k, tSec);
+  cam3.position.set(p.x, p.h, p.z); cam3.fov = 2 * Math.atan(10.125 / c.lens) * 180 / Math.PI;
+  cam3.aspect = 16 / 9; cam3.updateProjectionMatrix(); cam3.lookAt(p.tx, p.th, p.tz); cam3.updateMatrixWorld();
 }
 function render3d(shotId, w = 1280, h = 720) {
   const sh = S.shots.find(s => s.id === shotId), c = camOf(sh);
@@ -406,6 +439,7 @@ function sayShot(a, idx) {
   const vis = a.res.filter(r => r.inFrame).sort((u, v) => u.x - v.x), out = a.res.filter(r => !r.inFrame).map(r => r.p.name);
   const sizes = vis.map(r => r.size), lead = sizes.length ? sizes[Math.floor(sizes.length / 2)] : '空镜';
   let t = `S${idx + 1}（${a.c.lens}mm，${vis.length ? lead : '空镜'}）：`;
+  if (a.sh.motion && a.sh.motion.t !== 'none') t += `\n镜头运动：${moLabel(a.sh.motion)}。`;
   if (!vis.length) t += '画面里没有人。';
   else t += vis.map(r => `${r.pos}是${r.p.name}，${r.facing}${r.occl ? '，' + r.occl : ''}${r.edge ? '，' + r.edge : ''}`).join('；') + '。';
   if (vis.length >= 2) t += `从左到右：${vis.map(r => r.p.name).join('、')}。`;
@@ -486,11 +520,14 @@ function renderShots() {
     const need = speechSec(sh.line), over = need > sh.dur + 0.05, ax = axisWarn(i);
     tr.innerHTML = `<td class="num">S${i + 1}</td><td><select class="cam">${S.cameras.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}</select></td>
       <td><input class="dur" type="number" step="0.5" min="0.5" value="${sh.dur}"></td>
+      <td><div style="display:flex;gap:4px"><select class="mo">${MOTIONS.map(([v, n]) => `<option value="${v}">${n}</option>`).join('')}</select><input class="moa" type="number" step="0.1" min="0" title="幅度：推/拉/移/升/降=米，摇=角度，手持=强度" value="${sh.motion?.a ?? 1}" style="width:52px;flex:none"></div></td>
       <td><select class="spk"><option value="">（无台词）</option>${S.people.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}<option value="vo">旁白</option></select></td>
       <td><input class="line" value="${(sh.line || '').replace(/"/g, '&quot;')}" placeholder="这一镜的台词"></td>
       <td>${over ? `<span class="pill warn">台词要 ${need.toFixed(1)} 秒</span> ` : sh.line ? '<span class="pill ok">说得完</span> ' : ''}${ax ? '<span class="pill bad" title="' + ax + '">越轴</span>' : ''}</td>
       <td><button class="btn small del">✕</button></td>`;
-    tr.querySelector('.cam').value = sh.cam || ''; tr.querySelector('.spk').value = sh.speaker || '';
+    tr.querySelector('.cam').value = sh.cam || ''; tr.querySelector('.spk').value = sh.speaker || ''; tr.querySelector('.mo').value = sh.motion?.t || 'none';
+    tr.querySelector('.mo').onchange = e => { sh.motion ||= { t: 'none', a: 1 }; sh.motion.t = e.target.value; save(); refresh() };
+    tr.querySelector('.moa').onchange = e => { sh.motion ||= { t: 'none', a: 1 }; sh.motion.a = Math.max(0, parseFloat(e.target.value) || 0); save(); refresh(true); renderAnalysis() };
     tr.querySelector('.num').onclick = () => { curShot = sh.id; refresh() };
     tr.onclick = e => { if (e.target.tagName === 'TD') { curShot = sh.id; refresh() } };
     tr.querySelector('.cam').onchange = e => { sh.cam = e.target.value; curShot = sh.id; save(); refresh() };
@@ -523,19 +560,18 @@ document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
   if (k === 'person') { const p = { id: uid('p'), name: '人物' + (S.people.length + 1), color: COLORS[S.people.length % COLORS.length], x: 0, z: 0, face: 180, sit: false }; S.people.push(p); sel = { kind: 'person', id: p.id } }
   if (k === 'camera') { const c = { id: uid('c'), name: '机位' + (S.cameras.length + 1), x: 0, z: S.room.d / 2 - 0.5, h: 1.5, tx: 0, tz: 0, th: 1.3, lens: 35 }; S.cameras.push(c); sel = { kind: 'camera', id: c.id } }
   if (k === 'box') { const o = { id: uid('b'), name: '家具', x: 0, z: 0, w: 1, d: 1, h: 0.8, rot: 0 }; S.boxes.push(o); sel = { kind: 'box', id: o.id } }
-  if (k === 'shot') { const s = { id: uid('s'), cam: (camOf(S.shots.find(x => x.id === curShot)) || S.cameras[0])?.id || '', dur: 3, speaker: '', line: '', moves: {} }; const i = shotIndex(curShot); S.shots.splice(i + 1, 0, s); curShot = s.id }
+  if (k === 'shot') { const s = { id: uid('s'), cam: (camOf(S.shots.find(x => x.id === curShot)) || S.cameras[0])?.id || '', dur: 3, speaker: '', line: '', moves: {}, motion: { t: 'none', a: 1 } }; const i = shotIndex(curShot); S.shots.splice(i + 1, 0, s); curShot = s.id }
   save(); refresh();
 });
 document.getElementById('bSample').onclick = () => { if (confirm('换成示例场景？当前内容会被替换（先点“保存”可以留一份）。')) { S = sampleShots(SAMPLE()); curShot = S.shots[0].id; sel = null; save(); fitPlan(); refresh() } };
 document.getElementById('bNew').onclick = () => { if (confirm('清空当前场景？')) { S = { name: '新场景', room: { w: 10, d: 8 }, boxes: [], people: [], cameras: [], shots: [] }; curShot = null; sel = null; save(); fitPlan(); refresh() } };
 document.getElementById('bSave').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' })); a.download = (S.name || '白膜场景') + '.json'; a.click() };
 document.getElementById('bLoad').onclick = () => document.getElementById('file').click();
-document.getElementById('file').onchange = async e => { const f = e.target.files[0]; if (!f) return; try { S = JSON.parse(await f.text()); S.shots.forEach(s => s.moves ||= {}); curShot = S.shots[0]?.id || null; sel = null; save(); fitPlan(); refresh() } catch (err) { alert('这个文件打不开：' + err.message) } };
+document.getElementById('file').onchange = async e => { const f = e.target.files[0]; if (!f) return; try { S = JSON.parse(await f.text()); S.shots.forEach(s => { s.moves ||= {}; s.motion ||= { t: 'none', a: 1 } }); curShot = S.shots[0]?.id || null; sel = null; save(); fitPlan(); refresh() } catch (err) { alert('这个文件打不开：' + err.message) } };
 
 /* ---------------- 播放预演 ---------------- */
 const player = document.getElementById('player'), cp = document.getElementById('cPlay'), pg = cp.getContext('2d');
 let playing = 0;
-async function frameOf(shotId) { render3d(shotId, 1280, 720); const img = new Image(); img.src = c3d.toDataURL('image/jpeg', 0.92); await img.decode(); return img }
 function drawFrame(img, i, sh, t, need, over) {
   pg.drawImage(img, 0, 0, 1280, 720);
   pg.fillStyle = 'rgba(0,0,0,.55)'; pg.fillRect(20, 20, 300, 40);
@@ -550,7 +586,6 @@ function drawFrame(img, i, sh, t, need, over) {
 }
 async function play() {
   const token = ++playing; player.style.display = 'flex';
-  const imgs = []; for (const sh of S.shots) imgs.push(await frameOf(sh.id));
   const useTTS = document.getElementById('optTTS').checked && 'speechSynthesis' in window;
   let rec, chunks = [];
   if (document.getElementById('optRec').checked && cp.captureStream) {
@@ -563,8 +598,15 @@ async function play() {
     document.getElementById('playInfo').textContent = `S${i + 1} / ${S.shots.length}`;
     let spoken = !useTTS || !sh.line;
     if (!spoken) { const u = new SpeechSynthesisUtterance(sh.line); u.lang = 'zh-CN'; u.rate = 1.05; u.onend = u.onerror = () => spoken = true; speechSynthesis.cancel(); speechSynthesis.speak(u); setTimeout(() => spoken = true, (need + 2) * 1000) }
+    const c = camOf(sh);
+    buildWorld(sh.id); R3.setSize(1280, 720, false);
+    const drawLive = el => {
+      if (c) { setCam(c, sh.motion, ease(el / len), el); R3.render(scene, cam3) } else R3.clear();
+      drawFrame(c3d, i, sh, Math.min(1, (done + Math.min(el, len)) / total), need, over);
+    };
+    drawLive(0);
     const t0 = performance.now();
-    await new Promise(res => { const tick = () => { if (token !== playing) return res(); const el = (performance.now() - t0) / 1000; drawFrame(imgs[i], i, sh, Math.min(1, (done + Math.min(el, len)) / total), need, over); if (el >= len && spoken) return res(); requestAnimationFrame(tick) }; tick() });
+    await new Promise(res => { const tick = () => { if (token !== playing) return res(); const el = (performance.now() - t0) / 1000; drawLive(el); if (el >= len && spoken) return res(); requestAnimationFrame(tick) }; tick() });
     done += len;
   }
   if (rec) { rec.onstop = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(chunks, { type: 'video/webm' })); a.download = (S.name || '预演') + '.webm'; a.click() }; rec.stop() }
