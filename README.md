@@ -39,13 +39,31 @@
 
 ## 本地运行
 
-下载整个仓库，在仓库目录里启动任意一个静态服务器，比如：
+```bash
+git clone https://github.com/Lin3026/nana-whitebox.git
+cd nana-whitebox
+```
+
+**Windows：** 双击 `start.bat`
+
+**macOS / Linux：**
+
+```bash
+chmod +x start.sh   # 首次需要
+./start.sh          # 换端口：./start.sh 8080
+```
+
+两个脚本都会自动打开浏览器（地址 http://localhost:8000 ），保持窗口开着即可使用。
+
+也可以手动起任意静态服务器：
 
 ```bash
 python -m http.server 8000
 ```
 
-然后浏览器打开 http://localhost:8000 。直接双击 index.html 也能打开，但部分浏览器会拦截本地模块，建议用静态服务器。
+**注意：** 请通过 http 访问，不要直接双击 `index.html`。页面用了 `importmap` + ES Module，`file://` 协议下浏览器会按 CORS 规则拦掉模块加载，导致白屏。
+
+想在同一局域网的其他设备（手机、iPad）上用，把启动命令里的 `--bind 127.0.0.1` 改成 `--bind 0.0.0.0`，然后用本机局域网 IP 访问。
 
 ## 说明
 

@@ -1,0 +1,16 @@
+# 默认：Git 自行判断文本文件，统一存 LF
+* text=auto eol=lf
+
+# Windows 批处理必须 CRLF，否则 cmd 解析可能出错
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Shell 脚本必须 LF，否则 macOS/Linux 报 bad interpreter
+*.sh text eol=lf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webm binary
+*.mp4 binary
